@@ -120,6 +120,7 @@ def twonn_intrinsic_dimension(X):
     mu_sorted = np.sort(mu)
 
     F = np.arange(1, len(mu_sorted) + 1) / len(mu_sorted)
+    F = np.clip(F, 1e-10, 1 - 1e-10)
 
     x = np.log(mu_sorted).reshape(-1, 1)
     y = -np.log(1 - F)
