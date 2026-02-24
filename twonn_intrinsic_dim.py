@@ -42,6 +42,7 @@ def twonn_intrinsic_dimension(X):
 
     # Empirical CDF
     F = np.arange(1, len(mu_sorted) + 1) / len(mu_sorted)
+    F = np.clip(F, 1e-10, 1 - 1e-10)
 
     # Linear regression:
     # y = -log(1 - F)

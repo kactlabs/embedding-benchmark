@@ -88,7 +88,7 @@ def estimate_intrinsic_dim(embeddings, variance_threshold=0.95):
 # MAIN
 # -------------------------
 if __name__ == "__main__":
-    folder = "your_pdf_folder"
+    folder = "/Users/csp/datasets/5_pdf"
 
     texts = load_pdfs(folder)
     embeddings = build_embedding_matrix(texts)

@@ -30,4 +30,19 @@ Currently supports benchmarking multiple embedding models. Add or modify models 
 
 
 ## Screenshots
+### py estimate_intrinsic_dim.py
+![1771933466528](image/README/1771933466528.png)
+
+### py embedding_benchmark.py
+![1771933513453](image/README/1771933513453.png)
+
+### py levina_bickel_id.py
+![1771933644855](image/README/1771933644855.png)
+
+### py mle_intrinsic_dim.py
+![1771933673302](image/README/1771933673302.png)
+
+### py twonn_intrinsic_dim.py
+![1771933850450](image/README/1771933850450.png)
+
 ![1771930396117](image/README/1771930396117.png)![1771930397350](image/README/1771930397350.png)
