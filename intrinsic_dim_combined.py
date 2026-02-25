@@ -191,6 +191,7 @@ def print_intrinsic_dimension_report(results, k=20):
 # PDF Loading & Embedding
 # -------------------------
 import os
+import time
 from pypdf import PdfReader
 from tqdm import tqdm
 import requests
@@ -198,6 +199,13 @@ import random
 
 OLLAMA_URL = "http://localhost:11434/api/embeddings"
 EMBED_MODEL = "nomic-embed-text"
+
+# Model-specific context limits (in characters)
+# Ollama models typically have 8192 token context, ~4 chars per token
+MODEL_CONTEXT_LIMITS = {
+    "nomic-embed-text": 3000,   # ~750 tokens
+    "mxbai-embed-large": 2000,  # ~500 tokens
+}
 
 
 def load_pdfs(folder_path, max_pdfs=500):
@@ -219,8 +227,14 @@ def load_pdfs(folder_path, max_pdfs=500):
     return texts
 
 
-def chunk_text(text, chunk_size=800, overlap=100):
+def chunk_text(text, chunk_size=800, overlap=100, model=None):
     """Simple text chunking with overlap."""
+    # Adjust chunk size based on model context limit
+    if model:
+        max_len = MODEL_CONTEXT_LIMITS.get(model, 3000)
+        if chunk_size > max_len:
+            chunk_size = max_len
+    
     chunks = []
     start = 0
     while start < len(text):
@@ -230,28 +244,61 @@ def chunk_text(text, chunk_size=800, overlap=100):
     return chunks
 
 
-def embed_text(text, model=EMBED_MODEL):
+def embed_text(text, model=EMBED_MODEL, max_retries=3):
     """Embed text using Ollama."""
-    response = requests.post(
-        OLLAMA_URL,
-        json={"model": model, "prompt": text}
-    )
-    return response.json()["embedding"]
+    # Truncate text if it exceeds model's context limit
+    max_len = MODEL_CONTEXT_LIMITS.get(model, 3000)
+    if len(text) > max_len:
+        text = text[:max_len]
+    
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(
+                OLLAMA_URL,
+                json={"model": model, "prompt": text},
+                timeout=60
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            # Try different possible response keys
+            if "embedding" in data:
+                return data["embedding"]
+            elif "embeddings" in data:
+                return data["embeddings"][0]
+            else:
+                print(f"Unexpected response from {model}: {data.keys()}")
+                raise KeyError(f"Could not find embedding in response. Keys: {data.keys()}")
+        except (requests.exceptions.RequestException, KeyError) as e:
+            if attempt == max_retries - 1:
+                print(f"\nFailed to embed chunk after {max_retries} attempts: {e}")
+                return None
+            print(f"\nAttempt {attempt + 1} failed, retrying...")
+            time.sleep(1)
+    
+    return None
 
 
 def build_embedding_matrix(texts, max_chunks=2000, model=EMBED_MODEL):
     """Build embedding matrix from texts."""
     all_chunks = []
     for text in texts:
-        chunks = chunk_text(text)
+        chunks = chunk_text(text, model=model)
         all_chunks.extend(chunks)
     
     sampled = random.sample(all_chunks, min(len(all_chunks), max_chunks))
     
     embeddings = []
+    skipped = 0
     for chunk in tqdm(sampled, desc=f"Embedding chunks ({model})"):
         emb = embed_text(chunk, model=model)
-        embeddings.append(emb)
+        if emb is not None:
+            embeddings.append(emb)
+        else:
+            skipped += 1
+    
+    if skipped > 0:
+        print(f"\nSkipped {skipped} chunks due to embedding errors")
     
     return np.array(embeddings)
 
@@ -284,7 +331,7 @@ def intrinsic_dim_from_pdfs(folder_path, max_pdfs=500, max_chunks=2000, k=None, 
 
 
 if __name__ == "__main__":
-    folder = "/Users/csp/datasets/random_resume_minimal"
+    folder = "/Users/csp/datasets/5_pdf"
     
     # Test multiple embedding models for comparison
     # Add more models as needed
