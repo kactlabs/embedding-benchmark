@@ -208,9 +208,13 @@ def load_pdfs(folder_path, max_pdfs=500):
         if file.endswith(".pdf"):
             reader = PdfReader(os.path.join(folder_path, file))
             text = ""
+            pages_count = 0
             for page in reader.pages:
                 if page.extract_text():
                     text += page.extract_text()
+                    pages_count += 1
+            word_count = len(text.split()) if text else 0
+            print(f"  {file}: {pages_count} pages, {word_count} words")
             texts.append(text)
     return texts
 
@@ -226,16 +230,16 @@ def chunk_text(text, chunk_size=800, overlap=100):
     return chunks
 
 
-def embed_text(text):
+def embed_text(text, model=EMBED_MODEL):
     """Embed text using Ollama."""
     response = requests.post(
         OLLAMA_URL,
-        json={"model": EMBED_MODEL, "prompt": text}
+        json={"model": model, "prompt": text}
     )
     return response.json()["embedding"]
 
 
-def build_embedding_matrix(texts, max_chunks=2000):
+def build_embedding_matrix(texts, max_chunks=2000, model=EMBED_MODEL):
     """Build embedding matrix from texts."""
     all_chunks = []
     for text in texts:
@@ -245,14 +249,14 @@ def build_embedding_matrix(texts, max_chunks=2000):
     sampled = random.sample(all_chunks, min(len(all_chunks), max_chunks))
     
     embeddings = []
-    for chunk in tqdm(sampled, desc="Embedding chunks"):
-        emb = embed_text(chunk)
+    for chunk in tqdm(sampled, desc=f"Embedding chunks ({model})"):
+        emb = embed_text(chunk, model=model)
         embeddings.append(emb)
     
     return np.array(embeddings)
 
 
-def intrinsic_dim_from_pdfs(folder_path, max_pdfs=500, max_chunks=2000, k=None, use_pca=True):
+def intrinsic_dim_from_pdfs(folder_path, max_pdfs=500, max_chunks=2000, k=None, use_pca=True, model=EMBED_MODEL):
     """
     Full pipeline: Load PDFs -> Embed -> Calculate intrinsic dimension.
     """
@@ -261,7 +265,7 @@ def intrinsic_dim_from_pdfs(folder_path, max_pdfs=500, max_chunks=2000, k=None, 
     print(f"Loaded {len(texts)} PDFs")
     
     print("\nBuilding embedding matrix...")
-    embeddings = build_embedding_matrix(texts, max_chunks)
+    embeddings = build_embedding_matrix(texts, max_chunks, model=model)
     print(f"Embedding matrix shape: {embeddings.shape}")
     
     # Auto-adjust k based on sample size
@@ -281,7 +285,68 @@ def intrinsic_dim_from_pdfs(folder_path, max_pdfs=500, max_chunks=2000, k=None, 
 
 if __name__ == "__main__":
     folder = "/Users/csp/datasets/random_resume_minimal"
-    results, embeddings = intrinsic_dim_from_pdfs(folder, max_pdfs=500, max_chunks=2000)
     
-    print("\nFinal Combined Intrinsic Dimension Score:")
-    print(f"  Combined ID: {results['combined']:.2f}")
+    # Test multiple embedding models for comparison
+    # Add more models as needed
+    MODELS = [
+        ("nomic-embed-text", "768-dim"),
+        ("mxbai-embed-large", "1024-dim"),
+    ]
+    
+    print("=" * 60)
+    print("EMBEDDING DIMENSIONALITY COMPARISON")
+    print("=" * 60)
+    print(f"\nFolder: {folder}")
+    print(f"Models: {', '.join([m[0] for m in MODELS])}")
+    
+    all_results = {}
+    
+    for model_name, dim_label in MODELS:
+        print(f"\n{'='*60}")
+        print(f"Testing: {model_name} ({dim_label})")
+        print(f"{'='*60}")
+        
+        results, embeddings = intrinsic_dim_from_pdfs(folder, max_pdfs=500, max_chunks=500, model=model_name)
+        all_results[model_name] = {
+            'dim_label': dim_label,
+            'id_combined': results['combined'],
+            'id_twonn': results['twonn'],
+            'id_lb_multi': results['levina_bickel_multi_k'],
+            'id_mle': results['mle'],
+            'shape': embeddings.shape
+        }
+    
+    # Summary table
+    print("\n" + "=" * 70)
+    print("SUMMARY: COMPARISON ACROSS EMBEDDING MODELS")
+    print("=" * 70)
+    print(f"\n{'Model':<25} {'Dim':<10} {'ID (Combined)':<15} {'ID (TwoNN)':<12} {'ID (Multi-k)':<12}")
+    print("-" * 70)
+    
+    for model_name, data in all_results.items():
+        print(f"{model_name:<25} {data['dim_label']:<10} {data['id_combined']:<15.2f} {data['id_twonn']:<12.2f} {data['id_lb_multi']:<12.2f}")
+    
+    print("-" * 70)
+    
+    # Recommendation
+    print("\nRECOMMENDATION:")
+    print("-" * 50)
+    
+    best_model = min(all_results.items(), key=lambda x: x[1]['id_combined'])
+    print(f"Lowest ID score: {best_model[0]} (ID = {best_model[1]['id_combined']:.2f})")
+    print(f"\nInterpretation:")
+    print(f"  - Lower ID = data lies on simpler manifold")
+    print(f"  - If ID << embedding_dim, smaller model may work")
+    print(f"  - If ID ≈ embedding_dim, current size is well utilized")
+    
+    # Check if smaller model would suffice
+    for model_name, data in all_results.items():
+        dim = int(data['dim_label'].replace('-dim', ''))
+        id_score = data['id_combined']
+        ratio = id_score / dim
+        if ratio < 0.05:
+            print(f"\n  {model_name}: ID ({id_score:.1f}) is only {ratio*100:.1f}% of dim ({dim})")
+            print(f"    → Consider smaller embedding model")
+        elif ratio > 0.7:
+            print(f"\n  {model_name}: ID ({id_score:.1f}) is {ratio*100:.1f}% of dim ({dim})")
+            print(f"    → Current dim is well utilized, larger dim may help")
